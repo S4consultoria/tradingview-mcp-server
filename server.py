@@ -23,7 +23,8 @@ try:
         tv_feed = TvDatafeed()  # anonymous (limited history)
         TV_AUTH = False
     TV_FEED_AVAILABLE = True
-except ImportError:
+except Exception as e:
+    print(f"tvDatafeed not available: {e}")
     tv_feed = None
     TV_FEED_AVAILABLE = False
     TV_AUTH = False
@@ -674,4 +675,12 @@ def server_status() -> str:
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     logger.info(f"Starting TradingView MCP Server on port {port}")
-    mcp.run(transport="sse", host="0.0.0.0", port=port)
+
+    try:
+        # Try with host/port params (newer mcp versions)
+        mcp.run(transport="sse", host="0.0.0.0", port=port)
+    except TypeError:
+        # Fallback: run via uvicorn directly
+        import uvicorn
+        app = mcp.sse_app()
+        uvicorn.run(app, host="0.0.0.0", port=port)
