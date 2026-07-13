@@ -595,7 +595,11 @@ def server_status() -> str:
 async def health(request: Request):
     return JSONResponse({"status": "ok", "server": "TradingView MCP Server"})
 
-# Build Starlette app with OAuth routes + MCP SSE
+# Build MCP SSE app
+mcp_sse_app = mcp.sse_app()
+
+# Build Starlette app: OAuth routes (explicit) + MCP SSE (mounted)
+# Starlette checks Routes before Mounts, so OAuth won't conflict
 app = Starlette(
     routes=[
         Route("/", health),
@@ -603,13 +607,11 @@ app = Starlette(
         Route("/register", oauth_register, methods=["POST"]),
         Route("/authorize", oauth_authorize),
         Route("/token", oauth_token, methods=["POST"]),
-        # MCP SSE routes are mounted below
+        # Mount MCP at both root and /mcp for compatibility
+        Mount("/mcp", app=mcp_sse_app),
+        Mount("/", app=mcp_sse_app),
     ],
 )
-
-# Mount the MCP SSE app
-mcp_sse_app = mcp.sse_app()
-app.mount("/mcp", mcp_sse_app)
 
 # ===================== ENTRYPOINT =====================
 
