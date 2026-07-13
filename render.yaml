@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: tradingview-mcp-server
+    runtime: docker
+    plan: free
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: TV_USERNAME
+        sync: false    # set manually in Render dashboard
+      - key: TV_PASSWORD
+        sync: false    # set manually in Render dashboard
+    healthCheckPath: /
