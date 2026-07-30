@@ -1,0 +1,5 @@
+mcp==1.29.0
+tradingview-ta==3.3.0
+git+https://github.com/rongardF/tvdatafeed.git
+uvicorn
+pandas
