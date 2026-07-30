@@ -13,6 +13,10 @@ from typing import Optional
 from mcp.server.fastmcp import FastMCP
 from tradingview_ta import TA_Handler, Interval
 from tvDatafeed import TvDatafeed, Interval as TvInterval
+from starlette.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from oauth import build_oauth_routes, is_valid_token
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tradingview-mcp")
@@ -170,6 +174,42 @@ def screen_market(
 # Entrypoint — Streamable HTTP montado en /mcp, tal como el servidor de Alpaca
 # ---------------------------------------------------------------------------
 app = mcp.streamable_http_app()
+
+# URL pública del servicio (Render la inyecta automáticamente en
+# RENDER_EXTERNAL_URL; en local usamos localhost como fallback)
+_PUBLIC_URL = (
+    os.environ.get("PUBLIC_URL")
+    or os.environ.get("RENDER_EXTERNAL_URL")
+    or "http://localhost:8000"
+)
+
+# Rutas OAuth 2.1 + PKCE + Dynamic Client Registration (auto-aprobado,
+# single-user) para satisfacer el handshake que exige Claude.ai al
+# conectar un conector personalizado.
+for _route in build_oauth_routes(_PUBLIC_URL):
+    app.router.routes.insert(0, _route)
+
+
+class _BearerAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        if request.url.path.startswith("/mcp"):
+            auth_header = request.headers.get("authorization", "")
+            token = auth_header[7:] if auth_header.startswith("Bearer ") else None
+            if not token or not is_valid_token(token):
+                return JSONResponse(
+                    {"error": "invalid_token"},
+                    status_code=401,
+                    headers={
+                        "WWW-Authenticate": (
+                            f'Bearer resource_metadata="{_PUBLIC_URL}'
+                            f'/.well-known/oauth-protected-resource"'
+                        )
+                    },
+                )
+        return await call_next(request)
+
+
+app.add_middleware(_BearerAuthMiddleware)
 
 if __name__ == "__main__":
     import uvicorn
