@@ -9,8 +9,10 @@ transporte Streamable HTTP montado en /mcp, listo para Render.
 import os
 import logging
 from typing import Optional
+from urllib.parse import urlparse
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from tradingview_ta import TA_Handler, Interval
 from tvDatafeed import TvDatafeed, Interval as TvInterval
 from starlette.responses import JSONResponse
@@ -20,7 +22,35 @@ from oauth import build_oauth_routes, is_valid_token
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tradingview-mcp")
 
-mcp = FastMCP("tradingview-mcp", stateless_http=True)
+# El host público real (Render inyecta esto automáticamente). Se usa tanto
+# para las rutas OAuth como para la lista de Hosts permitidos por la
+# protección anti DNS-rebinding del SDK de MCP (sin esto, Render responde
+# 421 Misdirected Request a cualquier request real).
+_RENDER_HOSTNAME = os.environ.get("RENDER_EXTERNAL_HOSTNAME")  # p.ej. "tradingview-mcp-server-2.onrender.com"
+_PUBLIC_URL = (
+    os.environ.get("PUBLIC_URL")
+    or os.environ.get("RENDER_EXTERNAL_URL")
+    or "http://localhost:8000"
+)
+
+_allowed_hosts = ["localhost", "localhost:8000", "127.0.0.1", "127.0.0.1:8000"]
+if _RENDER_HOSTNAME:
+    _allowed_hosts.append(_RENDER_HOSTNAME)
+# Respaldo: derivar el host directamente de _PUBLIC_URL por si
+# RENDER_EXTERNAL_HOSTNAME no estuviera disponible en el entorno.
+_parsed_public_host = urlparse(_PUBLIC_URL).netloc
+if _parsed_public_host and _parsed_public_host not in _allowed_hosts:
+    _allowed_hosts.append(_parsed_public_host)
+
+mcp = FastMCP(
+    "tradingview-mcp",
+    stateless_http=True,
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=_allowed_hosts,
+        allowed_origins=["*"],
+    ),
+)
 
 # ---------------------------------------------------------------------------
 # tvDatafeed: sesión opcional autenticada (histórico funciona sin login,
@@ -173,14 +203,6 @@ def screen_market(
 # Entrypoint — Streamable HTTP montado en /mcp, tal como el servidor de Alpaca
 # ---------------------------------------------------------------------------
 app = mcp.streamable_http_app()
-
-# URL pública del servicio (Render la inyecta automáticamente en
-# RENDER_EXTERNAL_URL; en local usamos localhost como fallback)
-_PUBLIC_URL = (
-    os.environ.get("PUBLIC_URL")
-    or os.environ.get("RENDER_EXTERNAL_URL")
-    or "http://localhost:8000"
-)
 
 # Rutas OAuth 2.1 + PKCE + Dynamic Client Registration (auto-aprobado,
 # single-user) para satisfacer el handshake que exige Claude.ai al
