@@ -14,7 +14,6 @@ from mcp.server.fastmcp import FastMCP
 from tradingview_ta import TA_Handler, Interval
 from tvDatafeed import TvDatafeed, Interval as TvInterval
 from starlette.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
 
 from oauth import build_oauth_routes, is_valid_token
 
@@ -190,13 +189,20 @@ for _route in build_oauth_routes(_PUBLIC_URL):
     app.router.routes.insert(0, _route)
 
 
-class _BearerAuthMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        if request.url.path.startswith("/mcp"):
-            auth_header = request.headers.get("authorization", "")
+class _BearerAuthMiddleware:
+    """Middleware ASGI puro (no BaseHTTPMiddleware) para no bufferear ni
+    romper el streaming que necesita el transporte Streamable HTTP de MCP."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"].startswith("/mcp"):
+            headers = dict(scope.get("headers") or [])
+            auth_header = headers.get(b"authorization", b"").decode()
             token = auth_header[7:] if auth_header.startswith("Bearer ") else None
             if not token or not is_valid_token(token):
-                return JSONResponse(
+                response = JSONResponse(
                     {"error": "invalid_token"},
                     status_code=401,
                     headers={
@@ -206,10 +212,12 @@ class _BearerAuthMiddleware(BaseHTTPMiddleware):
                         )
                     },
                 )
-        return await call_next(request)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
 
 
-app.add_middleware(_BearerAuthMiddleware)
+app = _BearerAuthMiddleware(app)
 
 if __name__ == "__main__":
     import uvicorn
